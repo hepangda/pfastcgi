@@ -34,8 +34,6 @@
 #include <unistd.h>
 #include <sys/un.h>
 
-#include <iostream>
-
 #define CASTUC(val) static_cast<unsigned char>(( val ))
 
 enum class FcgiType: int {

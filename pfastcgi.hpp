@@ -1,275 +1,298 @@
 /**
- *  MIT License
+ * MIT License
  *
- *  Copyright (c) 2018 hepangda
+ * Copyright (c) 2018 hepangda
  *
- *  Permission is hereby granted, free of charge, to any person obtaining a copy
- *  of this software and associated documentation files (the "Software"), to deal
- *  in the Software without restriction, including without limitation the rights
- *  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- *  copies of the Software, and to permit persons to whom the Software is
- *  furnished to do so, subject to the following conditions:
- *  
- *  The above copyright notice and this permission notice shall be included in all
- *  copies or substantial portions of the Software.
- *  
- *  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- *  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- *  SOFTWARE.
-**/
-#pragma once
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ **/
 
-#include <new>
-#include <memory>
-#include <cstring>
-#include <cstddef>
+#ifndef PFASTCGI_PFASTCGI_H
+#define PFASTCGI_PFASTCGI_H
 
-#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <unistd.h>
+#include <sys/socket.h>
 #include <sys/un.h>
+#include <unistd.h>
+#include <cassert>
+#include <cstddef>
+#include <cstring>
+#include <memory>
+#include <new>
 
-#define CASTUC(val) static_cast<unsigned char>(( val ))
+namespace pfcgi {
 
-enum class FcgiType: int {
-    BEGIN   = 1,
-    ABORT   = 2,
-    END     = 3,
-    PARAMS  = 4,
-    STDIN   = 5,
-    STDOUT  = 6,
-    STDERR  = 7,
-    DATA    = 8,
-    GETVAL  = 9,
-    VALRES  = 10,
-    UNKNOWN = 11
+using Byte = unsigned char;
+
+const int kFcgiVersion = 1;
+const int kFcgiKeepAlive = 1;
+
+enum FcgiType {
+  kTypeBegin = 1,
+  kTypeAbort = 2,
+  kTypeEnd = 3,
+  kTypeParams = 4,
+  kTypeStdin = 5,
+  kTypeStdout = 6,
+  kTypeStderr = 7,
+  kTypeData = 8,
+  kTypeGetValues = 9,
+  kTypeValueResult = 10,
+  kTypeUnknown = 11
 };
 
-enum class FcgiRole {
-    RESPONSER  = 1,
-    AUTHORIZER = 2,
-    FILTER     = 3
+enum FcgiRole { kRoleResponder = 1, kRoleAuthorizer = 2, kRoleFilter = 3 };
+
+struct FcgiHeader {
+  Byte version;
+  Byte type;
+  Byte request_id1;
+  Byte request_id0;
+  Byte content_length1;
+  Byte content_length0;
+  Byte padding_length;
+  Byte reserved;
+
+  FcgiHeader() {}
+
+  FcgiHeader(FcgiType type, int content_length, int request_id = 1,
+             int padding_length = 0)
+      : version(kFcgiVersion),
+        type(type),
+        request_id1((request_id >> 8) & 0xff),
+        request_id0(request_id & 0xff),
+        content_length1((content_length >> 8) & 0xff),
+        content_length0(content_length & 0xff),
+        padding_length(padding_length),
+        reserved(0) {}
+
+  int request_id() const { return (request_id1 << 8) + request_id0; }
+
+  int content_length() const {
+    return (content_length1 << 8) + content_length0;
+  }
+
+  void set_request_id(int request_id) {
+    request_id1 = (request_id >> 8) & 0xff;
+    request_id0 = request_id & 0xff;
+  }
+
+  void set_content_length(int content_length) {
+    content_length1 = (content_length >> 8) & 0xff;
+    content_length0 = content_length & 0xff;
+  }
 };
 
-struct FcgiPreread {
-    FcgiType type;
-    int      requestId;
-    int      contentLength;
-    int      paddingLength;
+struct FcgiRequestBeginBody {
+  Byte role1;
+  Byte role0;
+  Byte flags;
+  Byte reserved[5];
+
+  FcgiRequestBeginBody() {}
+
+  FcgiRequestBeginBody(int role, bool keep_alive)
+      : role1((role >> 8) & 0xff), role0(role & 0xff), flags(keep_alive) {}
+
+  int role() const { return (role1 << 8) + role0; }
+
+  bool keep_alive() const { return flags & kFcgiKeepAlive; }
+
+  void set_keep_alive(bool keep_alive) {
+    flags = keep_alive ? kFcgiKeepAlive : 0;
+  }
+
+  void set_role(FcgiRole role) {
+    role1 = (role >> 8) & 0xff;
+    role0 = role & 0xff;
+  }
+};
+
+struct FcgiRequestBegin {
+  FcgiHeader header;
+  FcgiRequestBeginBody body;
+};
+
+// struct FcgiRequestEndBody {
+//   unsigned char appStatusB3;
+//   unsigned char appStatusB2;
+//   unsigned char appStatusB1;
+//   unsigned char appStatusB0;
+//   unsigned char protocolStatus;
+//   unsigned char reserved[3];
+// };
+
+struct FcgiParams {
+  Byte name_length3;
+  Byte name_length2;
+  Byte name_length1;
+  Byte name_length0;
+  Byte value_length3;
+  Byte value_length2;
+  Byte value_length1;
+  Byte value_length0;
+
+  FcgiParams() {}
+
+  FcgiParams(int name_length, int value_length)
+      : name_length3((name_length >> 24) | 0x80),
+        name_length2(name_length >> 16),
+        name_length1(name_length >> 8),
+        name_length0(name_length),
+        value_length3((value_length >> 24) | 0x80),
+        value_length2(value_length >> 16),
+        value_length1(value_length >> 8),
+        value_length0(value_length) {}
+
+  // TODO: finish name_length()
+  // int name_length() const { return (name_length3 << 24) & 0x0F; }
+
+  void set_name_length(int name_length) {
+    name_length3 = (name_length >> 24) | 0x80;
+    name_length2 = name_length >> 16;
+    name_length1 = name_length >> 8;
+    name_length0 = name_length;
+  }
 };
 
 class FcgiManager {
-private:
-    int _reqid  = -1;
-    static const int FcgiVersion   = 1;
-    static const int FcgiKeepAlive = 1;
+ public:
+  virtual ~FcgiManager() { closeSocket(); }
 
-    struct FcgiHeader {
-        unsigned char version;
-        unsigned char type;
-        unsigned char requestIdB1;
-        unsigned char requestIdB0;
-        unsigned char contentLengthB1;
-        unsigned char contentLengthB0;
-        unsigned char paddingLength;
-        unsigned char reserved;
+  virtual int start(const char *addr, int port) = 0;
 
-        FcgiHeader() {}
-        FcgiHeader(FcgiType reqtype, int ctlen, int reqid = 1, int padlen = 0) {
-            version         = CASTUC(FcgiVersion);
-            type            = CASTUC(reqtype);
-            requestIdB1     = CASTUC((reqid >> 8) & 0xff);
-            requestIdB0     = CASTUC(reqid & 0xff);
-            contentLengthB1 = CASTUC((ctlen >> 8) & 0xff);
-            contentLengthB0 = CASTUC(ctlen & 0xff);
-            paddingLength   = padlen;
-            reserved        = 0;
-        }
-    };
+  inline int doRead(void *buf, size_t length, int flags = 0) const {
+    return ::recv(fcgifd_, buf, length, flags);
+  }
 
-    struct FcgiBodyReqBegin {
-        unsigned char roleB1;
-        unsigned char roleB0;
-        unsigned char flags;
-        unsigned char reserved[5];
+  inline int doWrite(void *buf, size_t length, int flags = 0) const {
+    return ::send(fcgifd_, buf, length, flags);
+  }
 
-        FcgiBodyReqBegin() {}
-        FcgiBodyReqBegin(int role, bool keepAlive) {
-            roleB1 = CASTUC((role >> 8) & 0xff);
-            roleB0 = CASTUC(role & 0xff);
-            flags  = keepAlive ? FcgiKeepAlive : 0;
-            for (int i = 0; i < 5; i++) {
-                reserved[i] = 0;
-            }
-        }
-    };
+  FcgiHeader readHeader() const {
+    FcgiHeader header;
+    doRead(&header, sizeof(header));
+    return header;
+  }
 
-    struct FcgiMsgBegin {
-        FcgiHeader header;
-        FcgiBodyReqBegin body;
-    };
+  int startParams(FcgiRole role, bool keep_alive, int request_id) const {
+    FcgiRequestBegin msg{{kTypeBegin, sizeof(FcgiRequestBeginBody), request_id},
+                         {role, keep_alive}};
 
-    struct FcgiBodyReqEnd {
-        unsigned char appStatusB3;
-        unsigned char appStatusB2;
-        unsigned char appStatusB1;
-        unsigned char appStatusB0;
-        unsigned char protocolStatus;
-        unsigned char reserved[3];
-    };
+    return doWrite(&msg, sizeof(msg));
+  }
 
-    struct FcgiBodyParamsHeader {
-        unsigned char nameLengthB3;
-        unsigned char nameLengthB2;
-        unsigned char nameLengthB1;
-        unsigned char nameLengthB0;
-        unsigned char valueLengthB3;
-        unsigned char valueLengthB2;
-        unsigned char valueLengthB1;
-        unsigned char valueLengthB0;
-        
-        FcgiBodyParamsHeader(int nlen, int vlen) {
-            nameLengthB3  = CASTUC((nlen >> 24) | 0x80);
-            nameLengthB2  = CASTUC(nlen >> 16);
-            nameLengthB1  = CASTUC(nlen >> 8);
-            nameLengthB0  = CASTUC(nlen);
-            valueLengthB3 = CASTUC((vlen >> 24) | 0x80);
-            valueLengthB2 = CASTUC(vlen >> 16);
-            valueLengthB1 = CASTUC(vlen >> 8);
-            valueLengthB0 = CASTUC(vlen);
-        }
-    };
-  
-protected:
-    int _fcgifd = -1;
-    inline void closeSocket() {
-        if (_fcgifd != -1) {
-            close(_fcgifd);
-        }
-    }
+  int sendParams(const char *key, const char *value, int request_id) const {
+    static constexpr auto kHeaderLength =
+        sizeof(FcgiParams) + sizeof(FcgiHeader);
 
-public:
-    virtual int start(const char *addr, unsigned int port) = 0;
+    auto key_length = strlen(key), value_length = strlen(value),
+         all_length = kHeaderLength + key_length + value_length;
 
-    FcgiManager(int reqid): _reqid(reqid) {} 
-    virtual ~FcgiManager() {
-        closeSocket();
-    }
+    std::unique_ptr<Byte[]> buf(new Byte[all_length]);
+    new (buf.get())
+        FcgiHeader(kTypeParams, key_length + value_length, request_id);
+    new (buf.get() + sizeof(FcgiHeader)) FcgiParams(key_length, value_length);
 
-    int beginRequest(FcgiRole role = FcgiRole::RESPONSER, bool keepAlive = false, int reqid = 1) const {
-        static constexpr auto reqLen = sizeof(FcgiBodyReqBegin);
-        FcgiMsgBegin msg = {{ FcgiType::BEGIN, reqLen, reqid }, { int(role), keepAlive }};
-        return doWrite(&msg, sizeof(FcgiMsgBegin));
-    }
+    memcpy(buf.get() + kHeaderLength, key, key_length);
+    memcpy(buf.get() + kHeaderLength + key_length, value, value_length);
 
-    int sendParams(const char *key, const char *value, int reqid = 1) const {
-        static constexpr auto headLen = sizeof(FcgiBodyParamsHeader) + sizeof(FcgiHeader);
-        auto klen = strlen(key), vlen = strlen(value), allen = headLen + klen + vlen;
+    return doWrite(buf.get(), all_length);
+  }
 
-        std::shared_ptr<unsigned char> buf(new unsigned char[allen], std::default_delete<unsigned char[]>());
+  int endParams(int requestID) const {
+    FcgiHeader header(kTypeParams, 0, requestID);
+    return doWrite(&header, sizeof(header));
+  }
 
-        new(buf.get()) FcgiHeader(FcgiType::PARAMS, allen - sizeof(FcgiHeader), reqid);
-        new(buf.get() + sizeof(FcgiHeader)) FcgiBodyParamsHeader(klen, vlen);
-        memcpy(buf.get() + headLen, key, klen);
-        memcpy(buf.get() + headLen + klen, value, vlen);
+ protected:
+  inline int fcgifd() const { return fcgifd_; }
+  inline void set_fcgifd(const int fcgifd) { fcgifd_ = fcgifd; }
+  inline void closeSocket() {
+    if (fcgifd_ != -1) close(fcgifd_);
+  }
 
-        return doWrite(buf.get(), allen);
-    }
+ private:
+  int fcgifd_ = -1;
 
-    int endParams(int reqid = 1) const {
-        static constexpr auto reqLen = 0;
-        FcgiHeader msg = { FcgiType::PARAMS, 0, reqid };
-        return doWrite(&msg, sizeof(FcgiHeader));
-    }
+  // -1 represents END OF REQUEST
+  // 0  represents NO
+  // 1  represents YES
+  // int pkgType(FcgiPreread fp) {
+  //   if (fp.type == FcgiType::END) return -1;
+  //   if (fp.type != FcgiType::STDOUT && fp.type != FcgiType::STDERR) return 0;
+  //   return (fp.contentLength > 0) ? 1 : 0;
+  // }
 
-    bool isOk() const {
-        return _fcgifd != -1;
-    }
+  // inline int readContent(FcgiPreread pre, void *buffer) {
+  //   std::shared_ptr<char> padding(new char[pre.paddingLength],
+  //                                 std::default_delete<char[]>());
+  //   return readContent(pre, buffer, padding.get());
+  // }
 
-    FcgiPreread preRead() {
-        FcgiHeader head;
-        doRead(&head, sizeof(FcgiHeader));
-
-        return { FcgiType(head.type), (head.requestIdB1 << 8) + head.requestIdB0, 
-                (head.contentLengthB1 << 8) + head.contentLengthB0, head.paddingLength };
-    }
-
-    // -1 represents END OF REQUEST
-    // 0  represents NO
-    // 1  represents YES
-    int pkgType(FcgiPreread fp) {
-        if (fp.type == FcgiType::END)
-            return -1;
-        if (fp.type != FcgiType::STDOUT && fp.type != FcgiType::STDERR)
-            return 0;
-        return (fp.contentLength > 0) ? 1 : 0;
-    }
-
-    inline int readContent(FcgiPreread pre, void *buffer) {
-        std::shared_ptr<char> padding(new char[pre.paddingLength], std::default_delete<char []>());
-        return readContent(pre, buffer, padding.get());
-    }
-
-    int readContent(FcgiPreread pre, void *buffer, void *paddingBuffer) {
-        int res = doRead(buffer, pre.contentLength);
-        doRead(paddingBuffer, pre.paddingLength);
-        return res;
-    }
-
-    inline int doRead(void *buf, size_t length, int flags = 0) const {
-        return ::recv(_fcgifd, buf, length, flags);
-    }
-
-    inline int doWrite(void *buf, size_t length, int flags = 0) const {
-        return ::send(_fcgifd, buf, length, flags);
-    }
+  // int readContent(FcgiPreread pre, void *buffer, void *paddingBuffer) {
+  //   int res = doRead(buffer, pre.contentLength);
+  //   doRead(paddingBuffer, pre.paddingLength);
+  //   return res;
+  // }
 };
 
-class FcgiManagerINET: public FcgiManager {
-public:
-    FcgiManagerINET(const char *addr, const unsigned int port, int reqid = 1): FcgiManager(reqid) {
-        start(addr, port);
-    }
-    int start(const char *addr, unsigned int port) {
-        closeSocket();
+class FcgiManagerINET : public FcgiManager {
+ public:
+  FcgiManagerINET(const char *addr, const int port) { start(addr, port); }
+  int start(const char *addr, const int port) override {
+    assert(port >= 0);
+    closeSocket();
 
-        sockaddr_in sktaddr;
-        memset(&sktaddr, 0, sizeof(sockaddr_in));
-        sktaddr.sin_family = AF_INET;
-        sktaddr.sin_port = htons(port);
+    sockaddr_in sktaddr;
+    memset(&sktaddr, 0, sizeof(sockaddr_in));
+    sktaddr.sin_family = AF_INET;
+    sktaddr.sin_port = htons(port);
 
-        if (inet_pton(AF_INET, addr, &sktaddr.sin_addr) <= 0) {
-            return -1;
-        }
-        int fd = socket(AF_INET, SOCK_STREAM, 0);
-        _fcgifd = fd;
-        return connect(fd, (sockaddr *)&sktaddr, sizeof(sockaddr_in));
+    if (inet_pton(AF_INET, addr, &sktaddr.sin_addr) <= 0) {
+      return -1;
     }
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    set_fcgifd(fd);
+    return connect(fd, (sockaddr *)&sktaddr, sizeof(sockaddr_in));
+  }
 };
 
-class FcgiManagerUnix: public FcgiManager {
-public:
-    FcgiManagerUnix(const char *path, int reqid = 1): FcgiManager(reqid) {
-        start(path);
-    }
-    int start(const char *path, unsigned int padding = 0) {
-        closeSocket();
+class FcgiManagerUnix : public FcgiManager {
+ public:
+  FcgiManagerUnix(const char *path) { start(path); }
 
-        sockaddr_un sktaddr;
-        memset(&sktaddr, 0, sizeof(sockaddr_un));
-        sktaddr.sun_family = AF_UNIX;
-        strcpy(sktaddr.sun_path, path);
+  int start(const char *path, const int padding = 0) override {
+    closeSocket();
 
-        int fd = socket(AF_UNIX, SOCK_STREAM, 0),
-            size = offsetof(sockaddr_un, sun_path) + strlen(sktaddr.sun_path);
-        _fcgifd = fd;
-        return connect(fd, (sockaddr *)&sktaddr, size);
-    }
+    sockaddr_un sktaddr;
+    memset(&sktaddr, 0, sizeof(sockaddr_un));
+    sktaddr.sun_family = AF_UNIX;
+    strcpy(sktaddr.sun_path, path);
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0),
+        size = offsetof(sockaddr_un, sun_path) + strlen(sktaddr.sun_path);
+    set_fcgifd(fd);
+    return connect(fd, (sockaddr *)&sktaddr, size);
+  }
 };
 
-#undef CASTUC
+}  // namespace pfcgi
+
+#endif // PFASTCGI_PFASTCGI_H 
